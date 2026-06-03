@@ -33,6 +33,8 @@ st.markdown("""
     h1 { color: #00bcd4; }
     h2, h3, h4, h5 { color: #f0f2f6; }
     .footer { text-align: center; color: #888; font-family: 'Segoe UI', sans-serif; margin-top: 50px; padding: 20px; border-top: 1px solid #333; }
+    /* Slightly compact the latex block */
+    .katex-display { margin: 0.5em 0 !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -79,22 +81,23 @@ st.sidebar.subheader("🧪 2. Biophysical Environment")
 st.sidebar.selectbox("Chemical State", ["Control (Physics Only)", "Biocidal Coating (Ag+/Cu2+)", "Stealth Coating (PEG)", "Protein Fouling"], key="chem_state")
 current_time = st.sidebar.slider("Incubation Time (Hours)", 0, 96, 48, key='time_slider')
 
-# BIOLOGICALLY CALIBRATED SLIDERS
-st.sidebar.slider("Stiffness (kPa)", 0.1, 2000.0, key='stiffness', help="P. aeruginosa mechanosenses via PilY1, upregulating virulence on solid surfaces >100 kPa. Soft hydrogels (<10 kPa) suppress this.")
-st.sidebar.slider("Surface Charge (mV)", -100.0, 100.0, key='charge', help="P. aeruginosa is highly electronegative (-30mV). Cationic surfaces (+mV) promote rapid electrostatic adhesion but can be engineered to rupture membranes.")
-st.sidebar.slider("Shear Stress (Pa)", 0.0, 20.0, key='shear', help="Low flow (0.5-2 Pa) activates pilus 'catch bonds'. High shear (>15 Pa) physically prevents irreversible colonization.")
-st.sidebar.slider("Surface Energy (mJ/m²)", 10.0, 80.0, key='energy', help="Optimal colonization typically occurs at moderate energies (20-40 mJ/m²). Extremes (ultra-low/high) create thermodynamic hydration barriers.")
+st.sidebar.slider("Stiffness (kPa)", 0.1, 2000.0, key='stiffness', help="P. aeruginosa mechanosenses via PilY1, upregulating virulence on solid surfaces >100 kPa.")
+st.sidebar.slider("Surface Charge (mV)", -100.0, 100.0, key='charge', help="P. aeruginosa is highly electronegative (-30mV). Cationic surfaces (+mV) promote rapid adhesion.")
+st.sidebar.slider("Shear Stress (Pa)", 0.0, 20.0, key='shear', help="Low flow (0.5-2 Pa) activates pilus 'catch bonds'. High shear (>15 Pa) physically prevents colonization.")
+st.sidebar.slider("Surface Energy (mJ/m²)", 10.0, 80.0, key='energy', help="Optimal colonization typically occurs at moderate energies (20-40 mJ/m²).")
 st.sidebar.toggle("Hydrophobic Regime (>90°)", key='hydro_state')
 st.sidebar.toggle("⚠️ Disable Biological Clamping", key='bypass_clamp')
 
-# Standardized computational grid size
 GRID_RES = 250 
 fov_microns = 100.0
 x_surf = np.linspace(0, fov_microns, GRID_RES)
 y_surf = np.linspace(0, fov_microns, GRID_RES)
 
+# Hard-locked Z-axis limit set to 2500 nm
+GLOBAL_Z_MAX = 2500.0 
+
 if uploaded_file is not None:
-    # --- 7. Image Processing Pipeline (CLAHE & Resize) ---
+    # --- 7. Image Processing Pipeline ---
     image = Image.open(uploaded_file)
     img_array = np.array(image)
     if len(img_array.shape) == 3:
@@ -109,7 +112,7 @@ if uploaded_file is not None:
     enhanced_img = clahe.apply(square_img)
     resized_img = cv2.resize(enhanced_img, (GRID_RES, GRID_RES), interpolation=cv2.INTER_AREA)
 
-    # --- 8. Top Visuals & Topographical UI Controls ---
+    # --- 8. Top Visuals ---
     col_orig, col_cv = st.columns(2)
     
     with col_orig:
@@ -121,7 +124,7 @@ if uploaded_file is not None:
         cv_img_placeholder = st.empty() 
         
         st.markdown("##### 🎛️ Topographical Calibration")
-        GLOBAL_Z_MAX = 5000.0 
+        # Slider is now locked to a maximum of 2500 nm
         z_max_nm = st.slider("Estimated Max Z-Height (nm)", min_value=10.0, max_value=GLOBAL_Z_MAX, value=1000.0, step=10.0)
         
         col_sx, col_sy = st.columns(2)
@@ -137,7 +140,6 @@ if uploaded_file is not None:
         
         annotated_img = cv2.cvtColor(enhanced_img, cv2.COLOR_GRAY2RGB)
         cv2.rectangle(annotated_img, (ui_x_start, ui_y_start), (ui_x_end, ui_y_end), (255, 0, 0), max(1, orig_dim // 75))
-        
         cv_img_placeholder.image(annotated_img, caption="Red Bounding Box = Selected ROI", use_container_width=True)
 
     # --- 9. Mathematical Surface Generation ---
@@ -155,7 +157,7 @@ if uploaded_file is not None:
 
     st.markdown("---")
 
-    # --- 10. Biological Logic Calculations (Euler Engine) ---
+    # --- 10. Biological Euler Engine ---
     def apply_clamp(val, floor, ceil, bypass):
         if bypass: return val
         return np.clip(val, floor, ceil)
@@ -213,10 +215,7 @@ if uploaded_file is not None:
     fig_side.add_trace(go.Scatter(x=t_arr, y=biomass_curve, fill='tozeroy', line=dict(color='#00E5FF', width=2)))
     fig_side.add_vline(x=current_time, line_width=2, line_dash="dash", line_color="white")
     fig_side.add_trace(go.Scatter(x=[current_time], y=[biomass_at_t], mode='markers', marker=dict(color='white', size=8, line=dict(width=1, color=color_status))))
-    fig_side.update_layout(
-        xaxis_title="Time (h)", yaxis_title="OD600 eq", template="plotly_dark", 
-        height=250, margin=dict(l=0, r=0, t=10, b=0), showlegend=False
-    )
+    fig_side.update_layout(xaxis_title="Time (h)", yaxis_title="OD600 eq", template="plotly_dark", height=250, margin=dict(l=0, r=0, t=10, b=0), showlegend=False)
     st.sidebar.plotly_chart(fig_side, use_container_width=True)
 
     # --- 12. Dashboard Status Metrics ---
@@ -226,7 +225,7 @@ if uploaded_file is not None:
     col_stat3.metric("Global Empirical Roughness (Ra)", f"{Ra_empirical:.1f} nm")
     st.markdown("---")
 
-    # --- 13. Dynamic Topographical Spawning (Literature Aligned) ---
+    # --- 13. Dynamic Topographical Spawning ---
     X, Y = np.meshgrid(x_surf, y_surf)
     x_bac, y_bac, z_bac = [], [], []
     if biomass_at_t > 0:
@@ -257,7 +256,7 @@ if uploaded_file is not None:
             z_offset = np.max(Z_substrate) * (0.4 if "PLANKTONIC" in status else 0.015)
             z_bac = (Z_substrate[iy, ix] + z_offset).tolist()
 
-    # --- 14. Bottom Visuals: Locked-Axis 3D Topography & Profilometers ---
+    # --- 14. Bottom Visuals: 3D Topography & Profilometers ---
     st.markdown("#### 🏔 3D Empirical Topography & Profilometry")
     col_3d, col_prof = st.columns([2, 1.2]) 
 
@@ -307,6 +306,11 @@ if uploaded_file is not None:
             template="plotly_dark", height=580, margin=dict(l=0, r=0, b=0, t=0), showlegend=False
         )
         st.plotly_chart(fig3, use_container_width=True)
+        
+        # --- NEW: Dynamic Mathematical Formulation ---
+        st.markdown("##### 🧮 Empirical Surface Formulation")
+        st.latex(rf'''Z(x,y) = \left( \frac{{I(x,y)}}{{255}} \right) \times {z_max_nm:.1f} \text{{ nm}}''')
+        st.latex(rf'''R_a = \frac{{1}}{{A}} \iint_A |Z(x,y) - \bar{{Z}}| \,dx\,dy \approx {Ra_empirical:.1f} \text{{ nm}}''')
 
 else:
     st.info("⚠️ **Awaiting Data:** Please upload a surface image in the sidebar to initiate the topography mapping and colonization engine.")
