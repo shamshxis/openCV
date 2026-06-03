@@ -79,10 +79,11 @@ st.sidebar.subheader("🧪 2. Biophysical Environment")
 st.sidebar.selectbox("Chemical State", ["Control (Physics Only)", "Biocidal Coating (Ag+/Cu2+)", "Stealth Coating (PEG)", "Protein Fouling"], key="chem_state")
 current_time = st.sidebar.slider("Incubation Time (Hours)", 0, 96, 48, key='time_slider')
 
-st.sidebar.slider("Stiffness (kPa)", 0.1, 1500.0, key='stiffness')
-st.sidebar.slider("Surface Charge (mV)", -50.0, 50.0, key='charge')
-st.sidebar.slider("Shear Stress (Pa)", 0.0, 15.0, key='shear')
-st.sidebar.slider("Surface Energy (mJ/m²)", 0.1, 100.0, key='energy')
+# BIOLOGICALLY CALIBRATED SLIDERS
+st.sidebar.slider("Stiffness (kPa)", 0.1, 2000.0, key='stiffness', help="P. aeruginosa mechanosenses via PilY1, upregulating virulence on solid surfaces >100 kPa. Soft hydrogels (<10 kPa) suppress this.")
+st.sidebar.slider("Surface Charge (mV)", -100.0, 100.0, key='charge', help="P. aeruginosa is highly electronegative (-30mV). Cationic surfaces (+mV) promote rapid electrostatic adhesion but can be engineered to rupture membranes.")
+st.sidebar.slider("Shear Stress (Pa)", 0.0, 20.0, key='shear', help="Low flow (0.5-2 Pa) activates pilus 'catch bonds'. High shear (>15 Pa) physically prevents irreversible colonization.")
+st.sidebar.slider("Surface Energy (mJ/m²)", 10.0, 80.0, key='energy', help="Optimal colonization typically occurs at moderate energies (20-40 mJ/m²). Extremes (ultra-low/high) create thermodynamic hydration barriers.")
 st.sidebar.toggle("Hydrophobic Regime (>90°)", key='hydro_state')
 st.sidebar.toggle("⚠️ Disable Biological Clamping", key='bypass_clamp')
 
@@ -104,11 +105,8 @@ if uploaded_file is not None:
     min_dim = min(gray_img.shape[0], gray_img.shape[1])
     square_img = gray_img[:min_dim, :min_dim] 
     
-    # Apply CLAHE to rescue SEM contrast
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
     enhanced_img = clahe.apply(square_img)
-    
-    # Downsample for math matrix
     resized_img = cv2.resize(enhanced_img, (GRID_RES, GRID_RES), interpolation=cv2.INTER_AREA)
 
     # --- 8. Top Visuals & Topographical UI Controls ---
@@ -123,7 +121,6 @@ if uploaded_file is not None:
         cv_img_placeholder = st.empty() 
         
         st.markdown("##### 🎛️ Topographical Calibration")
-        # Global max Z-height variable used to lock all plot axes
         GLOBAL_Z_MAX = 5000.0 
         z_max_nm = st.slider("Estimated Max Z-Height (nm)", min_value=10.0, max_value=GLOBAL_Z_MAX, value=1000.0, step=10.0)
         
@@ -238,9 +235,6 @@ if uploaded_file is not None:
         n_clusters = max(5, int(total_points / 30))
         points_per_cluster = max(1, total_points // n_clusters)
         
-        # LITERATURE ALIGNMENT: P. aeruginosa dimensions are ~0.5 to 0.8 µm (500-800 nm). 
-        # If Ra is < 250 nm, the surface features are too small for structural shielding, leading to 100% random spread.
-        # If Ra is high, the bacteria exhibit strict valley-seeking behavior.
         valley_percentage = max(0.05, min(1.0, 250.0 / max(0.1, Ra_empirical)))
         
         flat_indices = np.argsort(Z_substrate.flatten())
@@ -270,7 +264,6 @@ if uploaded_file is not None:
     with col_prof:
         st.markdown("##### 🎚️ Profilometer Controls")
         
-        # X-Axis Sweep (Locked Y-Axis)
         slice_y_idx = st.slider("Sweep X-Axis Profile (Move Y)", 0, GRID_RES-1, GRID_RES//2, label_visibility="collapsed")
         z_x_profile = Z_substrate[slice_y_idx, :]
         fig_x = go.Figure(go.Scatter(x=x_surf, y=z_x_profile, mode='lines', fill='tozeroy', line=dict(color='cyan', width=2)))
@@ -279,11 +272,9 @@ if uploaded_file is not None:
             if np.any(mask_x):
                 fig_x.add_trace(go.Scatter(x=np.array(x_bac)[mask_x], y=np.array(z_bac)[mask_x], mode='markers', marker=dict(color=color_status, size=6, line=dict(width=1, color='black'))))
         
-        # Lock Y-Axis to GLOBAL_Z_MAX to see true squashing
         fig_x.update_layout(title=f"X-Profile (at Y={y_surf[slice_y_idx]:.1f}µm)", xaxis_title="X (µm)", yaxis_title="Height (nm)", yaxis=dict(range=[0, GLOBAL_Z_MAX]), template="plotly_dark", height=250, margin=dict(l=10, r=10, b=10, t=30), showlegend=False)
         st.plotly_chart(fig_x, use_container_width=True)
 
-        # Y-Axis Sweep (Locked Y-Axis)
         slice_x_idx = st.slider("Sweep Y-Axis Profile (Move X)", 0, GRID_RES-1, GRID_RES//2, label_visibility="collapsed")
         z_y_profile = Z_substrate[:, slice_x_idx]
         fig_y = go.Figure(go.Scatter(x=y_surf, y=z_y_profile, mode='lines', fill='tozeroy', line=dict(color='magenta', width=2)))
@@ -292,7 +283,6 @@ if uploaded_file is not None:
             if np.any(mask_y):
                 fig_y.add_trace(go.Scatter(x=np.array(y_bac)[mask_y], y=np.array(z_bac)[mask_y], mode='markers', marker=dict(color=color_status, size=6, line=dict(width=1, color='black'))))
         
-        # Lock Y-Axis to GLOBAL_Z_MAX to see true squashing
         fig_y.update_layout(title=f"Y-Profile (at X={x_surf[slice_x_idx]:.1f}µm)", xaxis_title="Y (µm)", yaxis_title="Height (nm)", yaxis=dict(range=[0, GLOBAL_Z_MAX]), template="plotly_dark", height=250, margin=dict(l=10, r=10, b=10, t=30), showlegend=False)
         st.plotly_chart(fig_y, use_container_width=True)
 
@@ -300,14 +290,12 @@ if uploaded_file is not None:
         fig3 = go.Figure()
         fig3.add_trace(go.Surface(z=Z_substrate, x=x_surf, y=y_surf, colorscale='Greys', showscale=False, opacity=0.9))
         
-        # Add Slice Indicators
         fig3.add_trace(go.Scatter3d(x=x_surf, y=[y_surf[slice_y_idx]]*GRID_RES, z=Z_substrate[slice_y_idx, :], mode='lines', line=dict(color='cyan', width=4)))
         fig3.add_trace(go.Scatter3d(x=[x_surf[slice_x_idx]]*GRID_RES, y=y_surf, z=Z_substrate[:, slice_x_idx], mode='lines', line=dict(color='magenta', width=4)))
         
         if len(x_bac) > 0:
             fig3.add_trace(go.Scatter3d(x=x_bac, y=y_bac, z=np.array(z_bac), mode='markers', marker=dict(size=4, color=color_status, opacity=1.0, line=dict(width=0.5, color='black'))))
 
-        # Hard lock the Z-axis range to GLOBAL_Z_MAX to prevent Plotly from auto-scaling the verticality
         fig3.update_layout(
             scene=dict(
                 xaxis_title='X (µm)', 
