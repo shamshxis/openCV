@@ -33,7 +33,6 @@ st.markdown("""
     h1 { color: #00bcd4; }
     h2, h3, h4, h5 { color: #f0f2f6; }
     .footer { text-align: center; color: #888; font-family: 'Segoe UI', sans-serif; margin-top: 50px; padding: 20px; border-top: 1px solid #333; }
-    /* Slightly compact the latex block */
     .katex-display { margin: 0.5em 0 !important; }
     </style>
     """, unsafe_allow_html=True)
@@ -93,7 +92,6 @@ fov_microns = 100.0
 x_surf = np.linspace(0, fov_microns, GRID_RES)
 y_surf = np.linspace(0, fov_microns, GRID_RES)
 
-# Hard-locked Z-axis limit set to 2500 nm
 GLOBAL_Z_MAX = 2500.0 
 
 if uploaded_file is not None:
@@ -133,6 +131,10 @@ if uploaded_file is not None:
         math_x_start, math_x_end = int((x_range[0] / 100) * GRID_RES), int((x_range[1] / 100) * GRID_RES)
         math_y_start, math_y_end = int((y_range[0] / 100) * GRID_RES), int((y_range[1] / 100) * GRID_RES)
         
+        # Prevent zero-width selections
+        if math_x_start == math_x_end: math_x_end += 1
+        if math_y_start == math_y_end: math_y_end += 1
+        
         orig_dim = enhanced_img.shape[0]
         ui_x_start, ui_x_end = int((x_range[0] / 100) * orig_dim), int((x_range[1] / 100) * orig_dim)
         ui_y_start, ui_y_end = int((y_range[0] / 100) * orig_dim), int((y_range[1] / 100) * orig_dim)
@@ -149,10 +151,32 @@ if uploaded_file is not None:
     Ra_empirical = np.mean(np.abs(Z_substrate - mean_z))
     st.session_state.roughness = Ra_empirical
 
-    with col_cv:
-        Z_roi = Z_substrate[math_y_start:math_y_end, math_x_start:math_x_end]
-        if Z_roi.size > 0:
+    # --- NEW: Dynamic Least Squares Polynomial Fitting for ROI ---
+    Z_roi = Z_substrate[math_y_start:math_y_end, math_x_start:math_x_end]
+    coeffs = [0, 0, 0, 0, 0, 0] # Default zeros
+    
+    if Z_roi.size > 0:
+        with col_cv:
             st.info(f"**Local ROI Metrics:** Max Peak: `{np.max(Z_roi):.1f} nm` | Avg Depth: `{np.mean(Z_roi):.1f} nm` | Local $R_a$: `{np.mean(np.abs(Z_roi - np.mean(Z_roi))):.1f} nm`")
+            
+        # Extract the X and Y coordinates specific to the ROI
+        x_roi_grid = x_surf[math_x_start:math_x_end]
+        y_roi_grid = y_surf[math_y_start:math_y_end]
+        X_roi, Y_roi = np.meshgrid(x_roi_grid, y_roi_grid)
+        
+        # Flatten matrices for regression
+        x_flat = X_roi.flatten()
+        y_flat = Y_roi.flatten()
+        z_flat = Z_roi.flatten()
+        
+        # Build the Design Matrix for 2nd order polynomial: Z = C0 + C1*X + C2*Y + C3*X^2 + C4*Y^2 + C5*X*Y
+        A = np.c_[np.ones(x_flat.shape[0]), x_flat, y_flat, x_flat**2, y_flat**2, x_flat*y_flat]
+        
+        # Solve for coefficients using numpy least squares
+        try:
+            coeffs, _, _, _ = np.linalg.lstsq(A, z_flat, rcond=None)
+        except Exception:
+            pass
 
     st.markdown("---")
 
@@ -306,17 +330,20 @@ if uploaded_file is not None:
         )
         st.plotly_chart(fig3, use_container_width=True)
 
-        # --- NEW: Dynamic Mathematical Formulation ---
-        st.markdown("##### 🧮 General Surface Formulation")
-        st.markdown("<span style='color: #888; font-size: 0.9em;'>The empirical topography can be mathematically represented as a generalized trend surface or decomposed into spatial frequencies.</span>", unsafe_allow_html=True)
+        # --- DYNAMIC EQUATION DISPLAY ---
+        st.markdown("##### 🧮 Empirical Surface Formulation (ROI Dynamic Fit)")
+        st.markdown("<span style='color: #888; font-size: 0.9em;'>Calculated via Least Squares Regression on the selected ROI generating a 2nd-Order Polynomial Trend Surface.</span>", unsafe_allow_html=True)
         
-        col_eq1, col_eq2 = st.columns(2)
-        with col_eq1:
-            st.markdown("**Polynomial Surface Fit (Global Trend)**")
-            st.latex(r'''Z(x,y) \approx \sum_{i=0}^{n} \sum_{j=0}^{m} C_{ij} x^i y^j''')
-        with col_eq2:
-            st.markdown("**2D Fourier Series (Spatial Roughness)**")
-            st.latex(r'''Z(x,y) \approx \sum_{k_x} \sum_{k_y} A_{k_x k_y} e^{i(k_x x + k_y y)}''')
+        # Display the dynamic equation with the calculated coefficients
+        sign1 = "+" if coeffs[1] >= 0 else "-"
+        sign2 = "+" if coeffs[2] >= 0 else "-"
+        sign3 = "+" if coeffs[3] >= 0 else "-"
+        sign4 = "+" if coeffs[4] >= 0 else "-"
+        sign5 = "+" if coeffs[5] >= 0 else "-"
+        
+        st.latex(rf'''
+        Z_{{roi}}(x,y) \approx {coeffs[0]:.1f} {sign1} {abs(coeffs[1]):.2f}x {sign2} {abs(coeffs[2]):.2f}y {sign3} {abs(coeffs[3]):.3f}x^2 {sign4} {abs(coeffs[4]):.3f}y^2 {sign5} {abs(coeffs[5]):.3f}xy
+        ''')
 
 else:
     st.info("⚠️ **Awaiting Data:** Please upload a surface image in the sidebar to initiate the topography mapping and colonization engine.")
