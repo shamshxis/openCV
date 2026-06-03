@@ -122,19 +122,18 @@ if uploaded_file is not None:
         st.markdown("#### 🔬 OpenCV Processed Footprint")
         cv_img_placeholder = st.empty() 
         
-        # Calibration & ROI Sliders grouped together
         st.markdown("##### 🎛️ Topographical Calibration")
-        z_max_nm = st.slider("Estimated Max Z-Height (nm)", min_value=10.0, max_value=5000.0, value=1000.0, step=10.0)
+        # Global max Z-height variable used to lock all plot axes
+        GLOBAL_Z_MAX = 5000.0 
+        z_max_nm = st.slider("Estimated Max Z-Height (nm)", min_value=10.0, max_value=GLOBAL_Z_MAX, value=1000.0, step=10.0)
         
         col_sx, col_sy = st.columns(2)
         with col_sx: x_range = st.slider("X-Axis ROI (%)", 0, 100, (20, 80))
         with col_sy: y_range = st.slider("Y-Axis ROI (%)", 0, 100, (20, 80))
         
-        # Math Coordinates
         math_x_start, math_x_end = int((x_range[0] / 100) * GRID_RES), int((x_range[1] / 100) * GRID_RES)
         math_y_start, math_y_end = int((y_range[0] / 100) * GRID_RES), int((y_range[1] / 100) * GRID_RES)
         
-        # UI Coordinates (drawing on high-res enhanced image)
         orig_dim = enhanced_img.shape[0]
         ui_x_start, ui_x_end = int((x_range[0] / 100) * orig_dim), int((x_range[1] / 100) * orig_dim)
         ui_y_start, ui_y_end = int((y_range[0] / 100) * orig_dim), int((y_range[1] / 100) * orig_dim)
@@ -142,7 +141,7 @@ if uploaded_file is not None:
         annotated_img = cv2.cvtColor(enhanced_img, cv2.COLOR_GRAY2RGB)
         cv2.rectangle(annotated_img, (ui_x_start, ui_y_start), (ui_x_end, ui_y_end), (255, 0, 0), max(1, orig_dim // 75))
         
-        cv_img_placeholder.image(annotated_img, caption="Red Bounding Box = Selected ROI (Contrast Enhanced)", use_container_width=True)
+        cv_img_placeholder.image(annotated_img, caption="Red Bounding Box = Selected ROI", use_container_width=True)
 
     # --- 9. Mathematical Surface Generation ---
     Z_substrate = (resized_img / 255.0) * z_max_nm
@@ -152,7 +151,6 @@ if uploaded_file is not None:
     Ra_empirical = np.mean(np.abs(Z_substrate - mean_z))
     st.session_state.roughness = Ra_empirical
 
-    # ROI local metrics
     with col_cv:
         Z_roi = Z_substrate[math_y_start:math_y_end, math_x_start:math_x_end]
         if Z_roi.size > 0:
@@ -231,7 +229,7 @@ if uploaded_file is not None:
     col_stat3.metric("Global Empirical Roughness (Ra)", f"{Ra_empirical:.1f} nm")
     st.markdown("---")
 
-    # --- 13. Dynamic Topographical Spawning ---
+    # --- 13. Dynamic Topographical Spawning (Literature Aligned) ---
     X, Y = np.meshgrid(x_surf, y_surf)
     x_bac, y_bac, z_bac = [], [], []
     if biomass_at_t > 0:
@@ -240,8 +238,10 @@ if uploaded_file is not None:
         n_clusters = max(5, int(total_points / 30))
         points_per_cluster = max(1, total_points // n_clusters)
         
-        # Determine settlement pool based on Ra. Low Ra = scatter everywhere. High Ra = stick to valleys.
-        valley_percentage = max(0.1, min(1.0, 30.0 / max(0.1, Ra_empirical)))
+        # LITERATURE ALIGNMENT: P. aeruginosa dimensions are ~0.5 to 0.8 µm (500-800 nm). 
+        # If Ra is < 250 nm, the surface features are too small for structural shielding, leading to 100% random spread.
+        # If Ra is high, the bacteria exhibit strict valley-seeking behavior.
+        valley_percentage = max(0.05, min(1.0, 250.0 / max(0.1, Ra_empirical)))
         
         flat_indices = np.argsort(Z_substrate.flatten())
         pool_size = max(1, int(len(flat_indices) * valley_percentage))
@@ -263,14 +263,14 @@ if uploaded_file is not None:
             z_offset = np.max(Z_substrate) * (0.4 if "PLANKTONIC" in status else 0.015)
             z_bac = (Z_substrate[iy, ix] + z_offset).tolist()
 
-    # --- 14. Bottom Visuals: 3D Topography & Profilometers ---
+    # --- 14. Bottom Visuals: Locked-Axis 3D Topography & Profilometers ---
     st.markdown("#### 🏔 3D Empirical Topography & Profilometry")
     col_3d, col_prof = st.columns([2, 1.2]) 
 
     with col_prof:
         st.markdown("##### 🎚️ Profilometer Controls")
         
-        # X-Axis Sweep
+        # X-Axis Sweep (Locked Y-Axis)
         slice_y_idx = st.slider("Sweep X-Axis Profile (Move Y)", 0, GRID_RES-1, GRID_RES//2, label_visibility="collapsed")
         z_x_profile = Z_substrate[slice_y_idx, :]
         fig_x = go.Figure(go.Scatter(x=x_surf, y=z_x_profile, mode='lines', fill='tozeroy', line=dict(color='cyan', width=2)))
@@ -279,11 +279,11 @@ if uploaded_file is not None:
             if np.any(mask_x):
                 fig_x.add_trace(go.Scatter(x=np.array(x_bac)[mask_x], y=np.array(z_bac)[mask_x], mode='markers', marker=dict(color=color_status, size=6, line=dict(width=1, color='black'))))
         
-        # Dynamic y-axis scaling so changes in z_max_nm are easily visible
-        fig_x.update_layout(title=f"X-Profile (at Y={y_surf[slice_y_idx]:.1f}µm)", xaxis_title="X (µm)", yaxis_title="Height (nm)", yaxis=dict(range=[0, max(10, z_max_nm)]), template="plotly_dark", height=250, margin=dict(l=10, r=10, b=10, t=30), showlegend=False)
+        # Lock Y-Axis to GLOBAL_Z_MAX to see true squashing
+        fig_x.update_layout(title=f"X-Profile (at Y={y_surf[slice_y_idx]:.1f}µm)", xaxis_title="X (µm)", yaxis_title="Height (nm)", yaxis=dict(range=[0, GLOBAL_Z_MAX]), template="plotly_dark", height=250, margin=dict(l=10, r=10, b=10, t=30), showlegend=False)
         st.plotly_chart(fig_x, use_container_width=True)
 
-        # Y-Axis Sweep
+        # Y-Axis Sweep (Locked Y-Axis)
         slice_x_idx = st.slider("Sweep Y-Axis Profile (Move X)", 0, GRID_RES-1, GRID_RES//2, label_visibility="collapsed")
         z_y_profile = Z_substrate[:, slice_x_idx]
         fig_y = go.Figure(go.Scatter(x=y_surf, y=z_y_profile, mode='lines', fill='tozeroy', line=dict(color='magenta', width=2)))
@@ -292,7 +292,8 @@ if uploaded_file is not None:
             if np.any(mask_y):
                 fig_y.add_trace(go.Scatter(x=np.array(y_bac)[mask_y], y=np.array(z_bac)[mask_y], mode='markers', marker=dict(color=color_status, size=6, line=dict(width=1, color='black'))))
         
-        fig_y.update_layout(title=f"Y-Profile (at X={x_surf[slice_x_idx]:.1f}µm)", xaxis_title="Y (µm)", yaxis_title="Height (nm)", yaxis=dict(range=[0, max(10, z_max_nm)]), template="plotly_dark", height=250, margin=dict(l=10, r=10, b=10, t=30), showlegend=False)
+        # Lock Y-Axis to GLOBAL_Z_MAX to see true squashing
+        fig_y.update_layout(title=f"Y-Profile (at X={x_surf[slice_x_idx]:.1f}µm)", xaxis_title="Y (µm)", yaxis_title="Height (nm)", yaxis=dict(range=[0, GLOBAL_Z_MAX]), template="plotly_dark", height=250, margin=dict(l=10, r=10, b=10, t=30), showlegend=False)
         st.plotly_chart(fig_y, use_container_width=True)
 
     with col_3d:
@@ -306,14 +307,14 @@ if uploaded_file is not None:
         if len(x_bac) > 0:
             fig3.add_trace(go.Scatter3d(x=x_bac, y=y_bac, z=np.array(z_bac), mode='markers', marker=dict(size=4, color=color_status, opacity=1.0, line=dict(width=0.5, color='black'))))
 
-        # Explicitly setting the Z-axis range ensures the visual geometry correctly scales with the user's slider input
+        # Hard lock the Z-axis range to GLOBAL_Z_MAX to prevent Plotly from auto-scaling the verticality
         fig3.update_layout(
             scene=dict(
                 xaxis_title='X (µm)', 
                 yaxis_title='Y (µm)', 
                 zaxis_title='Height (nm)', 
-                zaxis=dict(range=[0, max(10, z_max_nm)]),
-                aspectratio=dict(x=1, y=1, z=0.4)
+                zaxis=dict(range=[0, GLOBAL_Z_MAX]),
+                aspectratio=dict(x=1, y=1, z=0.5)
             ), 
             template="plotly_dark", height=580, margin=dict(l=0, r=0, b=0, t=0), showlegend=False
         )
