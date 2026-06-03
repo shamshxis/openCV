@@ -124,7 +124,6 @@ if uploaded_file is not None:
         cv_img_placeholder = st.empty() 
         
         st.markdown("##### 🎛️ Topographical Calibration")
-        # Slider is now locked to a maximum of 2500 nm
         z_max_nm = st.slider("Estimated Max Z-Height (nm)", min_value=10.0, max_value=GLOBAL_Z_MAX, value=1000.0, step=10.0)
         
         col_sx, col_sy = st.columns(2)
@@ -306,11 +305,18 @@ if uploaded_file is not None:
             template="plotly_dark", height=580, margin=dict(l=0, r=0, b=0, t=0), showlegend=False
         )
         st.plotly_chart(fig3, use_container_width=True)
-        
+
         # --- NEW: Dynamic Mathematical Formulation ---
-        st.markdown("##### 🧮 Empirical Surface Formulation")
-        st.latex(rf'''Z(x,y) = \left( \frac{{I(x,y)}}{{255}} \right) \times {z_max_nm:.1f} \text{{ nm}}''')
-        st.latex(rf'''R_a = \frac{{1}}{{A}} \iint_A |Z(x,y) - \bar{{Z}}| \,dx\,dy \approx {Ra_empirical:.1f} \text{{ nm}}''')
+        st.markdown("##### 🧮 General Surface Formulation")
+        st.markdown("<span style='color: #888; font-size: 0.9em;'>The empirical topography can be mathematically represented as a generalized trend surface or decomposed into spatial frequencies.</span>", unsafe_allow_html=True)
+        
+        col_eq1, col_eq2 = st.columns(2)
+        with col_eq1:
+            st.markdown("**Polynomial Surface Fit (Global Trend)**")
+            st.latex(r'''Z(x,y) \approx \sum_{i=0}^{n} \sum_{j=0}^{m} C_{ij} x^i y^j''')
+        with col_eq2:
+            st.markdown("**2D Fourier Series (Spatial Roughness)**")
+            st.latex(r'''Z(x,y) \approx \sum_{k_x} \sum_{k_y} A_{k_x k_y} e^{i(k_x x + k_y y)}''')
 
 else:
     st.info("⚠️ **Awaiting Data:** Please upload a surface image in the sidebar to initiate the topography mapping and colonization engine.")
