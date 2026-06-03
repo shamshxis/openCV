@@ -3,10 +3,8 @@ import cv2
 import numpy as np
 import plotly.graph_objects as go
 from PIL import Image
-from io import BytesIO
 import os
 import pandas as pd
-import base64
 
 # --- 1. Page Configuration ---
 st.set_page_config(
@@ -69,7 +67,7 @@ st.markdown("**Author(s):** Hamza Shams & Gemini AI")
 st.markdown("**Affiliation:** University of Oxford")
 st.markdown("---")
 
-# --- 6. Sidebar Inputs ---
+# --- 6. Sidebar Inputs (Excluding Z-Height) ---
 st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/thumb/f/ff/Oxford-University-Circlet.svg/200px-Oxford-University-Circlet.svg.png", width=100)
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
 
@@ -77,11 +75,7 @@ st.sidebar.header("📸 1. Image Upload")
 uploaded_file = st.sidebar.file_uploader("Upload Surface Image (SEM, TIFF, PNG)", type=["png", "jpg", "jpeg", "tiff", "tif"])
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📐 2. Z-Height Calibration")
-z_max_nm = st.sidebar.slider("Estimated Max Z-Height (nm)", min_value=10.0, max_value=5000.0, value=1000.0, step=10.0)
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("🧪 3. Biophysical Environment")
+st.sidebar.subheader("🧪 2. Biophysical Environment")
 st.sidebar.selectbox("Chemical State", ["Control (Physics Only)", "Biocidal Coating (Ag+/Cu2+)", "Stealth Coating (PEG)", "Protein Fouling"], key="chem_state")
 current_time = st.sidebar.slider("Incubation Time (Hours)", 0, 96, 48, key='time_slider')
 
@@ -92,13 +86,14 @@ st.sidebar.slider("Surface Energy (mJ/m²)", 0.1, 100.0, key='energy')
 st.sidebar.toggle("Hydrophobic Regime (>90°)", key='hydro_state')
 st.sidebar.toggle("⚠️ Disable Biological Clamping", key='bypass_clamp')
 
-GRID_RES = 150 
+# Standardized computational grid size
+GRID_RES = 250 
 fov_microns = 100.0
 x_surf = np.linspace(0, fov_microns, GRID_RES)
 y_surf = np.linspace(0, fov_microns, GRID_RES)
 
 if uploaded_file is not None:
-    # --- 7. Image Processing Pipeline ---
+    # --- 7. Image Processing Pipeline (CLAHE & Resize) ---
     image = Image.open(uploaded_file)
     img_array = np.array(image)
     if len(img_array.shape) == 3:
@@ -108,8 +103,49 @@ if uploaded_file is not None:
 
     min_dim = min(gray_img.shape[0], gray_img.shape[1])
     square_img = gray_img[:min_dim, :min_dim] 
-    resized_img = cv2.resize(square_img, (GRID_RES, GRID_RES), interpolation=cv2.INTER_AREA)
+    
+    # Apply CLAHE to rescue SEM contrast
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    enhanced_img = clahe.apply(square_img)
+    
+    # Downsample for math matrix
+    resized_img = cv2.resize(enhanced_img, (GRID_RES, GRID_RES), interpolation=cv2.INTER_AREA)
 
+    # --- 8. Top Visuals & Topographical UI Controls ---
+    col_orig, col_cv = st.columns(2)
+    
+    with col_orig:
+        st.markdown("#### 🖼️ Original Uploaded Image")
+        st.image(image, use_container_width=True)
+        
+    with col_cv:
+        st.markdown("#### 🔬 OpenCV Processed Footprint")
+        cv_img_placeholder = st.empty() 
+        
+        # Calibration & ROI Sliders grouped together
+        st.markdown("##### 🎛️ Topographical Calibration")
+        z_max_nm = st.slider("Estimated Max Z-Height (nm)", min_value=10.0, max_value=5000.0, value=1000.0, step=10.0)
+        
+        col_sx, col_sy = st.columns(2)
+        with col_sx: x_range = st.slider("X-Axis ROI (%)", 0, 100, (20, 80))
+        with col_sy: y_range = st.slider("Y-Axis ROI (%)", 0, 100, (20, 80))
+        
+        # Math Coordinates
+        math_x_start, math_x_end = int((x_range[0] / 100) * GRID_RES), int((x_range[1] / 100) * GRID_RES)
+        math_y_start, math_y_end = int((y_range[0] / 100) * GRID_RES), int((y_range[1] / 100) * GRID_RES)
+        
+        # UI Coordinates (drawing on high-res enhanced image)
+        orig_dim = enhanced_img.shape[0]
+        ui_x_start, ui_x_end = int((x_range[0] / 100) * orig_dim), int((x_range[1] / 100) * orig_dim)
+        ui_y_start, ui_y_end = int((y_range[0] / 100) * orig_dim), int((y_range[1] / 100) * orig_dim)
+        
+        annotated_img = cv2.cvtColor(enhanced_img, cv2.COLOR_GRAY2RGB)
+        cv2.rectangle(annotated_img, (ui_x_start, ui_y_start), (ui_x_end, ui_y_end), (255, 0, 0), max(1, orig_dim // 75))
+        
+        cv_img_placeholder.image(annotated_img, caption="Red Bounding Box = Selected ROI (Contrast Enhanced)", use_container_width=True)
+
+    # --- 9. Mathematical Surface Generation ---
+    # Now calculate Z_substrate based on the z_max_nm slider defined above
     Z_substrate = (resized_img / 255.0) * z_max_nm
     Z_substrate = Z_substrate - np.min(Z_substrate) 
     
@@ -117,7 +153,15 @@ if uploaded_file is not None:
     Ra_empirical = np.mean(np.abs(Z_substrate - mean_z))
     st.session_state.roughness = Ra_empirical
 
-    # --- 8. Biological Logic Calculations (Euler Engine) ---
+    # ROI local metrics
+    with col_cv:
+        Z_roi = Z_substrate[math_y_start:math_y_end, math_x_start:math_x_end]
+        if Z_roi.size > 0:
+            st.info(f"**Local ROI Metrics:** Max Peak: `{np.max(Z_roi):.1f} nm` | Avg Depth: `{np.mean(Z_roi):.1f} nm` | Local $R_a$: `{np.mean(np.abs(Z_roi - np.mean(Z_roi))):.1f} nm`")
+
+    st.markdown("---")
+
+    # --- 10. Biological Logic Calculations (Euler Engine) ---
     def apply_clamp(val, floor, ceil, bypass):
         if bypass: return val
         return np.clip(val, floor, ceil)
@@ -168,7 +212,7 @@ if uploaded_file is not None:
     elif biomass_at_t > 30: status, color_status = "COLONIZING", "#ffcc00"
     else: status, color_status = "PLANKTONIC", "#ff4444"
 
-    # --- 9. Sidebar Growth Dynamics Plot ---
+    # --- 11. Sidebar Growth Dynamics Plot ---
     st.sidebar.markdown("---")
     st.sidebar.markdown("#### 📈 Growth Dynamics")
     fig_side = go.Figure()
@@ -181,45 +225,14 @@ if uploaded_file is not None:
     )
     st.sidebar.plotly_chart(fig_side, use_container_width=True)
 
-    # --- 10. Dashboard Status Metrics ---
+    # --- 12. Dashboard Status Metrics ---
     col_stat1, col_stat2, col_stat3 = st.columns(3)
     col_stat1.markdown(f"**Simulation Status (t={current_time}h):** <span style='color:{color_status}; font-size:1.3em;'>{status}</span>", unsafe_allow_html=True)
     col_stat2.metric("Net Risk Score (S)", f"{score:.2f}")
     col_stat3.metric("Global Empirical Roughness (Ra)", f"{Ra_empirical:.1f} nm")
     st.markdown("---")
 
-    # --- 11. Top Visuals: Original vs OpenCV + ROI ---
-    col_orig, col_cv = st.columns(2)
-    
-    with col_orig:
-        st.markdown("#### 🖼️ Original Uploaded Image")
-        st.image(image, use_container_width=True)
-        
-    with col_cv:
-        st.markdown("#### 🔬 OpenCV Processed Footprint")
-        # Placeholder so we can render the image ABOVE the sliders
-        cv_img_placeholder = st.empty() 
-        
-        # Sliders cleanly embedded under the OpenCV output
-        col_sx, col_sy = st.columns(2)
-        with col_sx: x_range = st.slider("X-Axis ROI (%)", 0, 100, (20, 80))
-        with col_sy: y_range = st.slider("Y-Axis ROI (%)", 0, 100, (20, 80))
-        
-        x_start, x_end = int((x_range[0] / 100) * GRID_RES), int((x_range[1] / 100) * GRID_RES)
-        y_start, y_end = int((y_range[0] / 100) * GRID_RES), int((y_range[1] / 100) * GRID_RES)
-        
-        annotated_img = cv2.cvtColor(resized_img, cv2.COLOR_GRAY2RGB)
-        cv2.rectangle(annotated_img, (x_start, y_start), (x_end, y_end), (255, 0, 0), max(1, GRID_RES // 75))
-        
-        cv_img_placeholder.image(annotated_img, caption="Red Bounding Box = Selected ROI", use_container_width=True)
-        
-        Z_roi = Z_substrate[y_start:y_end, x_start:x_end]
-        if Z_roi.size > 0:
-            st.info(f"**Local ROI Metrics:** Max Peak: `{np.max(Z_roi):.1f} nm` | Avg Depth: `{np.mean(Z_roi):.1f} nm` | Local $R_a$: `{np.mean(np.abs(Z_roi - np.mean(Z_roi))):.1f} nm`")
-
-    st.markdown("---")
-
-    # --- 12. Topographical Spawning ---
+    # --- 13. Topographical Spawning ---
     X, Y = np.meshgrid(x_surf, y_surf)
     x_bac, y_bac, z_bac = [], [], []
     if biomass_at_t > 0:
@@ -247,7 +260,7 @@ if uploaded_file is not None:
             z_offset = np.max(Z_substrate) * (0.4 if "PLANKTONIC" in status else 0.015)
             z_bac = (Z_substrate[iy, ix] + z_offset).tolist()
 
-    # --- 13. Bottom Visuals: 3D Topography & Profilometers ---
+    # --- 14. Bottom Visuals: 3D Topography & Profilometers ---
     st.markdown("#### 🏔 3D Empirical Topography & Profilometry")
     col_3d, col_prof = st.columns([2, 1.2]) 
 
@@ -293,7 +306,7 @@ if uploaded_file is not None:
 else:
     st.info("⚠️ **Awaiting Data:** Please upload a surface image in the sidebar to initiate the topography mapping and colonization engine.")
 
-# --- 14. Footer ---
+# --- 15. Footer ---
 footer_html = """
     <div style="display: flex; justify-content: center; align-items: center; position: relative; padding: 20px; border-top: 1px solid #333; margin-top: 50px;">
         <div align="center" style="color: #888; font-family: 'Segoe UI', sans-serif;">
