@@ -67,7 +67,7 @@ st.markdown("**Author(s):** Hamza Shams & Gemini AI")
 st.markdown("**Affiliation:** University of Oxford")
 st.markdown("---")
 
-# --- 6. Sidebar Inputs (Excluding Z-Height) ---
+# --- 6. Sidebar Inputs ---
 st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/thumb/f/ff/Oxford-University-Circlet.svg/200px-Oxford-University-Circlet.svg.png", width=100)
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
 
@@ -145,7 +145,6 @@ if uploaded_file is not None:
         cv_img_placeholder.image(annotated_img, caption="Red Bounding Box = Selected ROI (Contrast Enhanced)", use_container_width=True)
 
     # --- 9. Mathematical Surface Generation ---
-    # Now calculate Z_substrate based on the z_max_nm slider defined above
     Z_substrate = (resized_img / 255.0) * z_max_nm
     Z_substrate = Z_substrate - np.min(Z_substrate) 
     
@@ -232,7 +231,7 @@ if uploaded_file is not None:
     col_stat3.metric("Global Empirical Roughness (Ra)", f"{Ra_empirical:.1f} nm")
     st.markdown("---")
 
-    # --- 13. Topographical Spawning ---
+    # --- 13. Dynamic Topographical Spawning ---
     X, Y = np.meshgrid(x_surf, y_surf)
     x_bac, y_bac, z_bac = [], [], []
     if biomass_at_t > 0:
@@ -241,8 +240,12 @@ if uploaded_file is not None:
         n_clusters = max(5, int(total_points / 30))
         points_per_cluster = max(1, total_points // n_clusters)
         
+        # Determine settlement pool based on Ra. Low Ra = scatter everywhere. High Ra = stick to valleys.
+        valley_percentage = max(0.1, min(1.0, 30.0 / max(0.1, Ra_empirical)))
+        
         flat_indices = np.argsort(Z_substrate.flatten())
-        valley_pool = flat_indices[:max(1, int(len(flat_indices) * 0.1))] 
+        pool_size = max(1, int(len(flat_indices) * valley_percentage))
+        valley_pool = flat_indices[:pool_size] 
         
         for _ in range(n_clusters):
             chosen_idx = np.random.choice(valley_pool)
@@ -275,7 +278,9 @@ if uploaded_file is not None:
             mask_x = (np.array(y_bac) >= y_surf[slice_y_idx] - 2.0) & (np.array(y_bac) <= y_surf[slice_y_idx] + 2.0)
             if np.any(mask_x):
                 fig_x.add_trace(go.Scatter(x=np.array(x_bac)[mask_x], y=np.array(z_bac)[mask_x], mode='markers', marker=dict(color=color_status, size=6, line=dict(width=1, color='black'))))
-        fig_x.update_layout(title=f"X-Profile (at Y={y_surf[slice_y_idx]:.1f}µm)", xaxis_title="X (µm)", yaxis_title="Height (nm)", template="plotly_dark", height=250, margin=dict(l=10, r=10, b=10, t=30), showlegend=False)
+        
+        # Dynamic y-axis scaling so changes in z_max_nm are easily visible
+        fig_x.update_layout(title=f"X-Profile (at Y={y_surf[slice_y_idx]:.1f}µm)", xaxis_title="X (µm)", yaxis_title="Height (nm)", yaxis=dict(range=[0, max(10, z_max_nm)]), template="plotly_dark", height=250, margin=dict(l=10, r=10, b=10, t=30), showlegend=False)
         st.plotly_chart(fig_x, use_container_width=True)
 
         # Y-Axis Sweep
@@ -286,7 +291,8 @@ if uploaded_file is not None:
             mask_y = (np.array(x_bac) >= x_surf[slice_x_idx] - 2.0) & (np.array(x_bac) <= x_surf[slice_x_idx] + 2.0)
             if np.any(mask_y):
                 fig_y.add_trace(go.Scatter(x=np.array(y_bac)[mask_y], y=np.array(z_bac)[mask_y], mode='markers', marker=dict(color=color_status, size=6, line=dict(width=1, color='black'))))
-        fig_y.update_layout(title=f"Y-Profile (at X={x_surf[slice_x_idx]:.1f}µm)", xaxis_title="Y (µm)", yaxis_title="Height (nm)", template="plotly_dark", height=250, margin=dict(l=10, r=10, b=10, t=30), showlegend=False)
+        
+        fig_y.update_layout(title=f"Y-Profile (at X={x_surf[slice_x_idx]:.1f}µm)", xaxis_title="Y (µm)", yaxis_title="Height (nm)", yaxis=dict(range=[0, max(10, z_max_nm)]), template="plotly_dark", height=250, margin=dict(l=10, r=10, b=10, t=30), showlegend=False)
         st.plotly_chart(fig_y, use_container_width=True)
 
     with col_3d:
@@ -300,7 +306,17 @@ if uploaded_file is not None:
         if len(x_bac) > 0:
             fig3.add_trace(go.Scatter3d(x=x_bac, y=y_bac, z=np.array(z_bac), mode='markers', marker=dict(size=4, color=color_status, opacity=1.0, line=dict(width=0.5, color='black'))))
 
-        fig3.update_layout(scene=dict(xaxis_title='X (µm)', yaxis_title='Y (µm)', zaxis_title='Height (nm)', aspectratio=dict(x=1, y=1, z=0.25)), template="plotly_dark", height=580, margin=dict(l=0, r=0, b=0, t=0), showlegend=False)
+        # Explicitly setting the Z-axis range ensures the visual geometry correctly scales with the user's slider input
+        fig3.update_layout(
+            scene=dict(
+                xaxis_title='X (µm)', 
+                yaxis_title='Y (µm)', 
+                zaxis_title='Height (nm)', 
+                zaxis=dict(range=[0, max(10, z_max_nm)]),
+                aspectratio=dict(x=1, y=1, z=0.4)
+            ), 
+            template="plotly_dark", height=580, margin=dict(l=0, r=0, b=0, t=0), showlegend=False
+        )
         st.plotly_chart(fig3, use_container_width=True)
 
 else:
